@@ -15,6 +15,7 @@
 #include "./ultimate-dos-lib/src/lib/ultimate_lib.h"
 
 #define NTP_TIMESTAMP_DELTA 2208988800ul //0x83AA7E80
+#define NTP_TIMEOUT_SECONDS 5
 /* //the data in the ntp packet
   typedef struct { // https://github.com/lettier/ntpclient/blob/master/source/c/main.c
     unsigned char li_vn_mode;      // Eight bits. li, vn, and mode.
@@ -64,6 +65,8 @@ void main(void)
                                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
     unsigned char socket = 0;
     time_t t;
+    clock_t start;
+    int got;
     char res[32];
     uii_get_time();
     printf("\nUltimate datetime: %s", uii_data);
@@ -81,9 +84,19 @@ void main(void)
     if(CheckStatus()) return;
     
     printf("\nReading result");
-    uii_socketread(socket, 50);// 2 + sizeof( ntp_packet ));
-    if(CheckStatus()) return;
+    // The reply may not have arrived yet. An empty READ answers at once with
+    // status 02 and count -1, so ask again until data arrives or the time
+    // limit is up. Any other status that is not 00 is a real error.
+    start = clock();
+    do {
+        got = uii_socketread(socket, 50);// 2 + sizeof( ntp_packet ));
+        if((uii_status[0] != '0' || uii_status[1] != '2') && CheckStatus()) return;
+    } while (got <= 0 && (clock() - start) < NTP_TIMEOUT_SECONDS * CLOCKS_PER_SEC);
     uii_socketclose(socket);
+    if (got < 38) {
+        printf("\nNo reply from %s", host);
+        return;
+    }
 
     t = uii_data[37] | (((unsigned long)uii_data[36])<<8)| (((unsigned long)uii_data[35])<<16)| (((unsigned long)uii_data[34])<<24);
     t -= NTP_TIMESTAMP_DELTA;
